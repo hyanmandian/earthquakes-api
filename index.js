@@ -1,32 +1,49 @@
 const express = require('express');
-const axios = require('axios');
 const app = express();
-const client = require('redis').createClient(process.env.REDIS_URL);
-
-const getEarthquakes = require('./services/getEarthquakes');
-const checkCache = require('./services/checkCache');
-
-const api = {
-  earthquakes: {
-    get: (from, to) => axios.get(`http://earthquake.usgs.gov/fdsnws/event/1/count?format=geojson&starttime=${from}-01-01&endtime=${to}-12-31`)
-  }
-}
+const cache = require('./services/cache');
+const earthquakes = require('./services/earthquakes');
 
 app.set('port', (process.env.PORT || 5000));
-app.use(express.static(__dirname + '/public'));
+
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
   next();
 });
 
+app.get('/api/earthquakes', async ({
+  query: {
+    from,
+    to,
+  },
+}, res) => {
+  const key = earthquakes.generateKey({
+    from,
+    to,
+  });
 
-app.get('/', () => console.log('Use the path /api/earthquakes in order to use the API.'));
+  const hasCache = await cache.has(key);
 
-app.get('/api/earthquakes', (req, res, next) => checkCache(req, res, next, client), (req, res) => getEarthquakes(req, res, client, api));
+  try {
+    const data = hasCache ? await cache.get(key) : await earthquakes.get({
+      from,
+      to,
+    });
+
+    if (!hasCache) cache.set(key, JSON.stringify(data));
+
+    return res.json(data);
+  } catch (e) {
+    return res.status(500).send({
+      error: e,
+    });
+  }
+});
+
+app.use(function(req, res){
+   res.send('Use the path /api/earthquakes in order to use the API.');
+});
 
 app.listen(app.get('port'), function() {
   console.log('Node app is running on port', app.get('port'));
 });
-
-
